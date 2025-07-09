@@ -36,6 +36,8 @@ class WriteFilteredData:
         # where all the data on additional days is -9999
         if (self.df.shape[0]-1) < (3*30*48):  # 3*30*48 is the amount of elememnts for a 3 months period 
             self.CompleteDataTo3Month()
+        else:
+            self.df_extended = self.df
             
         # self.SaveRInputTable()
         
@@ -113,7 +115,9 @@ class WriteFilteredData:
     
         output = mean_soil_temp.where(mean_soil_temp == -9999,mean_soil_temp-273.15)
         
-        output = round(output,2)
+        output = [i+273.15 if i<-100 else i for i in output]
+        
+        output = [round(x,2) for x in output]
         
         return output
     
@@ -131,7 +135,7 @@ class WriteFilteredData:
         'H': round(EC_table['H'],2),
         'Rg': np.round(self.Rg,2),
         'Tair': np.round(self.Ta,2),
-        'Tsoil': round(self.GetSoilTemp(),2),
+        'Tsoil': self.GetSoilTemp(),
         'rH': round(self.EC_table['RH'],2),
         'VPD': np.round(self.VPD,2),
         'Ustar': round(self.EC_table['u*'],2),   
