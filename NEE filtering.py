@@ -22,7 +22,7 @@ import subprocess
 import pandas as pd
 
 from Ancillary_methods.WriteFilteredData import WriteFilteredData
-from Ancillary_methods.utils import GetECFileNames,  ReadRequiredData, CalcSaveInds
+from Ancillary_methods.utils import GetECFileNames,  ReadRequiredData, CalcSaveIndsNEE
 
 
 
@@ -39,10 +39,10 @@ if __name__ == "__main__":
                                      full_output_filename,biomet_filename,season)
     
     ## Calculate filtering indices
-    inds = CalcSaveInds(season,EC_table,biomet_table,meteo,path)
+    inds = CalcSaveIndsNEE(season,EC_table,biomet_table,meteo,path)
     
     ## Create an input for the REddyProc R script
-    WW = WriteFilteredData(inds,season,meteo,biomet_table,EC_table)
+    WW = WriteFilteredData(inds,season,meteo,biomet_table,EC_tableflux_type = 'NEE')
     # Write the NEE gap filling input file
     WW.WriteRInputTable()
     
@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
     # Read Reddyproc output
     # Read the file, specifying tab separator and handling NA values
-    output_filename = r"C:\PhD\Codes python\EC processing\R input output files\Gadash_2019_filled_NEE.txt"
+    output_filename = rf"C:\PhD\Codes python\EC processing\R input output files\{season.replace(' ','_')}_filled_NEE.txt"
     
     df = pd.read_csv(output_filename, sep='\t', na_values=["NA"])
 

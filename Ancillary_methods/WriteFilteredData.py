@@ -16,12 +16,13 @@ import os
 class WriteFilteredData:
     
     def __init__(self, inds = None,season = None,meteo = None,
-                 biomet_table = None, EC_table = None):
+                 biomet_table = None, EC_table = None,flux_type = None):
         self.inds = inds
         self.season = season
         self.meteo = meteo
         self.biomet_table = biomet_table
         self.EC_table = EC_table
+        self.flux_type = flux_type
         # Get the indices of the wheather data points that corresponds tothe EC data
         self.inds1, self.inds2 = self.GetECPeriod()
         # In this function, the meteorological data which is originally in hourly
@@ -88,7 +89,7 @@ class WriteFilteredData:
     
     def ConvertHourToFraction(self,EC_table):
         '''
-        This function comvert the hour to a fraction of 24 hours as used in the 
+        This function convert the hour to a fraction of 24 hours as used in the 
         R input files
         '''
         hours = EC_table['datetime'].dt.hour
@@ -109,6 +110,17 @@ class WriteFilteredData:
         
         return temp['co2_flux']
     
+    
+    def ApplyIndicesOnLE(self,EC_table):
+        
+        # Create a copy of the EC table
+        temp = EC_table.copy()
+        
+        temp.loc[self.inds['total'], 'LE'] = -9999
+        
+        return temp['LE']
+    
+    
     def GetSoilTemp(self):
     
         mean_soil_temp = self.biomet_table[['TS_1_1_1','TS_1_1_3','TS_1_1_5','TS_1_1_7']].mean(axis=1)
@@ -126,21 +138,39 @@ class WriteFilteredData:
         # Save the dataframe with eddy covariance as a new varible
         EC_table = self.EC_table
         
-        self.df = pd.DataFrame({
-        'Year': EC_table['datetime'].dt.year,
-        'DoY': round(np.floor(EC_table['DOY'])),
-        'Hour': round(self.ConvertHourToFraction(EC_table),2),
-        'NEE': round(self.ApplyIndicesOnNEE(EC_table),2),
-        'LE': round(EC_table['LE'],2),
-        'H': round(EC_table['H'],2),
-        'Rg': np.round(self.Rg,2),
-        'Tair': np.round(self.Ta,2),
-        'Tsoil': self.GetSoilTemp(),
-        'rH': round(self.EC_table['RH'],2),
-        'VPD': np.round(self.VPD,2),
-        'Ustar': round(self.EC_table['u*'],2),   
         
-        })
+        if self.flux_type == 'NEE':
+            self.df = pd.DataFrame({
+            'Year': EC_table['datetime'].dt.year,
+            'DoY': round(np.floor(EC_table['DOY'])),
+            'Hour': round(self.ConvertHourToFraction(EC_table),2),
+            'NEE': round(self.ApplyIndicesOnNEE(EC_table),2),
+            'LE': round(EC_table['LE'],2),
+            'H': round(EC_table['H'],2),
+            'Rg': np.round(self.Rg,2),
+            'Tair': np.round(self.Ta,2),
+            'Tsoil': self.GetSoilTemp(),
+            'rH': round(self.EC_table['RH'],2),
+            'VPD': np.round(self.VPD,2),
+            'Ustar': round(self.EC_table['u*'],2),   
+            
+            })
+        elif self.flux_type == 'LE':
+            self.df = pd.DataFrame({
+            'Year': EC_table['datetime'].dt.year,
+            'DoY': round(np.floor(EC_table['DOY'])),
+            'Hour': round(self.ConvertHourToFraction(EC_table),2),
+            'NEE': round(EC_table['co2_flux'],2),
+            'LE': round(self.ApplyIndicesOnLE(EC_table),2),
+            'H': round(EC_table['H'],2),
+            'Rg': np.round(self.Rg,2),
+            'Tair': np.round(self.Ta,2),
+            'Tsoil': self.GetSoilTemp(),
+            'rH': round(self.EC_table['RH'],2),
+            'VPD': np.round(self.VPD,2),
+            'Ustar': round(self.EC_table['u*'],2),   
+            
+            })
         
         # Assign units
         units = ['-','-','-','umolm-2s-1','Wm-2','Wm-2','Wm-2',
@@ -194,7 +224,7 @@ class WriteFilteredData:
         season = self.season.replace(' ','_')
         
         # Define input file name
-        input_filename = F'{season}_NEE_gap_filling_input.txt'
+        input_filename = F'{season}_{self.flux_type}_gap_filling_input.txt'
         
         # Save data (after initial filtering) to a text file in format
         # suitable fo th R code

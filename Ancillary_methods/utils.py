@@ -232,8 +232,116 @@ def GetRainIndices(season,meteo,EC_table):
      
     return output
 
+
+# Calculte soil heat component (G) for the energy balance
+def CalcG(biomet_table,season):
+
+    ### Define constants and make preperations
+    ## Soil grain size distribution
+    # Gadash farm (data from C:\PhD\Data\Gadash 2019\Soil Particle Distribution.xlsx)
+    fraction_clay = 0.25
+    fraction_silt = 0.5
+    fraction_sand = 0.25    
+    ## Heat capacitiy constnats
+    C_sand = 0.79 # [J/gr/C]
+    C_silt = 0.81 # [J/gr/C]
+    C_clay = 0.94 # [J/gr/C]
+    C_water = 4.18 # [J/gr/C]    
+    # Calculate average soil heat capacity
+    C_s_avg = np.dot(np.array([C_clay,C_silt,C_sand]),
+        np.array([fraction_clay,fraction_silt,fraction_sand]))
+
+    # depth of flux measurement
+    d = 0.08 # [m]
+
+    # time interval - time interval is 30 minutes
+    t = 30*60 # [s] - because we want to obtain units of W/m^2
+
+    ## Soil moisture properties
+    # Density of water [gr/cm^3]
+    rho_w = 0.997 # Density of water [gr/cm^3]
+    # Bulk density of the soil [gr/cm^3]  (Data for Gadash farm)
+    rho_b = 1.23   
+    # Volumeteric water content - I assume this constant value based on data from previous experiments with similar soil (we don't have this data for this site)
+    theta_v = 0.42
+    # Heat capacity of the moist soil  [J/m^3/C]
+    Cs = (rho_b*C_s_avg + theta_v*rho_w*C_water)*10**6
+
+    ## Soil heat flux component
+    # Assign heat flux data to a numpy array
+    G_8 = biomet_table[['SHF_1_1_1','SHF_1_1_2','SHF_1_1_3','SHF_1_1_4']].to_numpy(dtype=float)
+
+
+    ## Soil heat storage analysis
+
+    # Assign soil temperature data to a numpy arrays
+    T_2cm = biomet_table[['TS_1_1_1','TS_1_1_3','TS_1_1_5','TS_1_1_7']].to_numpy(dtype=float)
+    T_6cm = biomet_table[['TS_1_1_2','TS_1_1_4','TS_1_1_6','TS_1_1_8']].to_numpy(dtype=float)
+
+    # With differnce between same depth
+    T_2cm_diff = np.diff(T_2cm,axis = 0)
+    T_6cm_diff = np.diff(T_6cm,axis = 0)
+
+    # Means of soil temperature differences between two following measurements for each
+    # measurement location
+    if season == 'Gadash 2019':
+        dT = np.column_stack((np.nanmean(np.column_stack((T_2cm_diff[:,3],T_6cm_diff[:,0])),1), # In Gadash 2019 the two thermocouples were defected so they are replacted by their equivalents
+                             np.nanmean(np.column_stack((T_2cm_diff[:,1],T_6cm_diff[:,1])),1),
+                             np.nanmean(np.column_stack((T_2cm_diff[:,2],T_6cm_diff[:,2])),1),
+                             np.nanmean(np.column_stack((T_2cm_diff[:,3],T_6cm_diff[:,0])),1)))
+    else:
+        dT = np.column_stack((np.nanmean(np.column_stack((T_2cm_diff[:,0],T_6cm_diff[:,0])),1),
+                             np.nanmean(np.column_stack((T_2cm_diff[:,1],T_6cm_diff[:,1])),1),
+                             np.nanmean(np.column_stack((T_2cm_diff[:,2],T_6cm_diff[:,2])),1),
+                             np.nanmean(np.column_stack((T_2cm_diff[:,3],T_6cm_diff[:,3])),1)))
+        
+    # Calculate soil heat storage
+    S = (dT*Cs*d)/t
+
+    # Add a Nan value at the beginning of the soil heat storage array to make it cmpatible to the simensions of the original data array
+    S = np.vstack([np.full((1,dT.shape[1]), np.nan),S])
+
+    ## Calaculate total soil heat flux
+    # Sum up heat flux and storage components
+    G_sfc1 = S + G_8
+
+    # Calculate the mean of all sensor locations
+    G_sfc = np.nanmean(G_sfc1,1)
+    
+    return G_sfc
+
+
+
+# Assign and calculate energy balance components
+def GetEBComponents(EC_table, biomet_table,season):
+    
+    ## Latent heat (LE) data
+    # Raw LE (latent heat) data
+    LE_raw = pd.to_numeric(EC_table['LE'], errors='coerce')
+
+    # LE quality flag
+    LE_quality = pd.to_numeric(EC_table['qc_LE'], errors='coerce')
+    
+    # Sensible heat (H)
+    H = pd.to_numeric(EC_table['H'], errors='coerce')
+    
+    # Net incoming radiation (Rn)
+    Rn = pd.to_numeric(biomet_table['RN_1_1_1'], errors='coerce')
+    
+    # Calculate Soil heat component (soil heat flux and storage) (G)
+    G = CalcG(biomet_table,season)  
+    
+    # Calculate available energy in the system (Rn-G) and the energy consumed (LE+H)
+    available_energy = Rn - G
+    
+    consumed_energy = LE_raw + H
+    
+    return LE_raw, LE_quality, H, Rn, G, available_energy, consumed_energy
+
+
+
 # Get the indicesof values to remove found by manual spike detection
-def GetSpikeDetectionIndices(inds,season):
+def GetSpikeDetectionIndicesNEE(inds,season):
     
     inds_spike= np.zeros(len(inds['quality']),dtype = bool)
     
@@ -257,9 +365,45 @@ def GetSpikeDetectionIndices(inds,season):
     return inds_spike
 
 
+# Definethe indices array for data points removed ater manual spike decetion
+def GetSpikeIndicesLE(season,EC_table):
+    
+    if season == 'Gadash 2019':
+        inds_eye_analysis_lE = [151, 268, 509, 540, 717, 827, 871, 874, 1012,
+                                1255, 1391, 1403, 1404, 1432, 1448] + list(range(1545, 1553)) + [
+                                1648, 1667, 1874, 2424, 3130, 3145, 3192,
+                                3229, 3282, 3314, 3360, 3375, 3434]
+    elif season == 'Gadot 2019':
+        inds_eye_analysis_lE = [47,48,66,77,96,118,157,200,241] + list((258,263)) + [
+                                390,538,545,555,1065,1177,1351,1449,1536,
+                                1699,1866,1888,2021,2081,2123] + list(range(2126,2130)) + [
+                                2550,2671,2901,2986,2994,3036,3039,3081,3101,3151,3179]+ list(range(3273,3277)) + [
+                                3364,3365,3414,3649,3703,
+                                4373,4428,4533,4587,4708,4730,4756,4908,5018,5318,5407]
+    elif season == 'Gadot 2020':
+        inds_eye_analysis_lE = [404,405,406,421,422,467,596,681,694,706,
+                                749,750,753,797,798,799,890,891,892,893,1069,
+                                1136,1925,2133,2397,2961,3083,3084,3086,
+                                3097,3199,4102,4247,4305,4443,4467];
+    elif season == 'Taanach 2024':
+        inds_eye_analysis_lE = [62,435,436,437,438,498,791,933,974,975,1133,1653,
+                                1654,1664,1712,1776,1804,1848,1856,1999,2000,
+                                2046,2112,2207,2310,2330,2912];
+        
+    # Convert to python indexing convetion rather than Matlab's (index count starts from 0)
+    inds_updated = [x-1 for x in inds_eye_analysis_lE]
+    
+    # Create the boolean vector and assign the indices as true
+    output = np.zeros(EC_table.shape[0],dtype=bool)
+    
+    output[inds_updated] = True;
+    
+    return output
+
+
 
 # Calculate filtering indices
-def CalcSaveInds(season,EC_table,biomet_table,meteo,path):
+def CalcSaveIndsNEE(season,EC_table,biomet_table,meteo,path):
     # Initialzie the indices dictionary
     inds = {}
     
@@ -278,7 +422,7 @@ def CalcSaveInds(season,EC_table,biomet_table,meteo,path):
             EC_table['co2_flux'] < 0)) 
     
     # Indices of values to remove found after manual spike detection
-    inds['spike_detection'] = GetSpikeDetectionIndices(inds,season)
+    inds['spike_detection'] = GetSpikeDetectionIndicesNEE(inds,season)
     
     # Get the combination of all indices excluding the u* indices
     inds['total'] = (inds['quality'] | inds['rain'] |
@@ -290,6 +434,37 @@ def CalcSaveInds(season,EC_table,biomet_table,meteo,path):
     
     inds['total'].to_csv(path + season + '.csv',index = False)
 
+    return inds
+
+
+def CalcSaveIndsLE(season, LE_raw, LE_quality, meteo, available_energy, 
+                     consumed_energy,EC_table):
+    
+    # Create an empty dictionary
+    inds = {}
+    
+    # Calculate filtering indices due to poor quality
+    inds['quality'] = (LE_quality == 2) | (LE_raw == -9999) 
+    
+    # Calculate filtering indices due to rain
+    inds['rain'] = GetRainIndices(season,meteo,EC_table)
+    
+    # Get filtering indices due to manual spike detection
+    inds['spike_detection'] = GetSpikeIndicesLE(season,EC_table)
+    
+    # Calculate indices based on energy balance closure
+    inds['EB_250'] = (available_energy - consumed_energy).abs() > 250
+    
+    # Combine indices
+    inds['total'] = (inds['quality'] | inds['rain'] | inds['spike_detection'] |
+    inds['EB_250'])
+    
+    ## Save filtering indices to a .csv file
+    # Define the path on which the indices will be saved
+    path = r'C:\PhD\Codes python\EC processing\Indices\inds_LE_'
+    
+    inds['total'].to_csv(path + season + '.csv',index = False)
+                                 
     return inds
 
 
@@ -324,3 +499,33 @@ def PlotFilteringResults(EC_table,inds):
              markerfacecolor = 'none', markeredgecolor = 'red', markersize = 3)
     
     plt.ylim(-60,60)
+    
+    
+    
+# Plot energy balance
+def PlotEnergyBalance(inds,available_energy, consumed_energy,inds_total):
+    
+    # Dfine X and Y components
+    X = available_energy[~inds_total]
+    Y = consumed_energy[~inds_total]
+    
+    # Define markers colors
+    color = 'blue'
+    
+    # Define marker size
+    size = 20
+    
+    # Plotresults
+    plt.scatter(
+        X, Y, 
+        s = size,
+        c = color,
+        edgecolors=color
+    )
+    
+    plt.xlabel('Rn - G [W/m^2]')
+    plt.ylabel('LE + H [W/m^2]')
+    
+    plt.show()
+    
+    return
